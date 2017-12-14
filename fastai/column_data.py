@@ -7,8 +7,7 @@ from .learner import *
 class PassthruDataset(Dataset):
     def __init__(self,*args):
         *xs,y=args
-        self.xs = xs
-        self.y = y[:,None].astype(np.float32)
+        self.xs,self.y = xs,y
 
     def __len__(self): return len(self.y)
     def __getitem__(self, idx): return [o[idx] for o in self.xs] + [self.y[idx]]
@@ -24,7 +23,7 @@ class ColumnarDataset(Dataset):
         n = len(cats[0]) if cats else len(conts[0])
         self.cats = np.stack(cats, 1).astype(np.int64) if cats else np.zeros((n,1))
         self.conts = np.stack(conts, 1).astype(np.float32) if conts else np.zeros((n,1))
-        self.y = np.zeros((n,1)) if y is None else y[:,None].astype(np.float32)
+        self.y = np.zeros((n,1)) if y is None else y[:,None]
 
     def __len__(self): return len(self.y)
 
@@ -43,16 +42,17 @@ class ColumnarDataset(Dataset):
 
 
 class ColumnarModelData(ModelData):
-    def __init__(self, path, trn_ds, val_ds, bs, test_ds=None):
+    def __init__(self, path, trn_ds, val_ds, bs, test_ds=None, shuffle=True):
         test_dl = DataLoader(test_ds, bs, shuffle=False, num_workers=1) if test_ds is not None else None
-        super().__init__(path, DataLoader(trn_ds, bs, shuffle=True, num_workers=1),
+        super().__init__(path, DataLoader(trn_ds, bs, shuffle=shuffle, num_workers=1),
             DataLoader(val_ds, bs*2, shuffle=False, num_workers=1), test_dl)
 
-    #def from_cats(cls, path, val_idxs, df, y_col, cols):
-        #x = df[cols]
-        #y = df[y_col]
-        #((val_df, trn_df), (val_y, trn_y)) = split_by_idx(val_idxs, x, y)
-        #return cls(
+    @classmethod
+    def from_arrays(cls, path, val_idxs, xs, y, bs=64, test_xs=None, shuffle=True):
+        ((val_xs, trn_xs), (val_y, trn_y)) = split_by_idx(val_idxs, xs, y)
+        test_ds = PassthruDataset(*(test_xs.T), [0] * len(test_xs)) if test_xs is not None else None
+        return cls(path, PassthruDataset(*(trn_xs.T), trn_y), PassthruDataset(*(val_xs.T), val_y),
+                   bs=bs, shuffle=shuffle, test_ds=test_ds)
 
     @classmethod
     def from_data_frames(cls, path, trn_df, val_df, trn_y, val_y, cat_flds, bs, test_df=None):
@@ -130,7 +130,7 @@ class StructuredModel(BasicModel):
 
 class CollabFilterDataset(Dataset):
     def __init__(self, path, user_col, item_col, ratings):
-        self.ratings,self.path = ratings,path
+        self.ratings,self.path = ratings.values.astype(np.float32),path
         self.n = len(ratings)
         (self.users,self.user2idx,self.user_col,self.n_users) = self.proc_col(user_col)
         (self.items,self.item2idx,self.item_col,self.n_items) = self.proc_col(item_col)
